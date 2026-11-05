@@ -1,0 +1,79 @@
+/* eslint-disable cypress/no-unnecessary-waiting */
+/* eslint-disable require-jsdoc */
+var Countly = require("../../lib/countly");
+var Utils = require("../support/sdk-modules/Utils.js");
+// import * as Countly from "../../dist/countly_umd.js";
+var hp = require("../support/helper.js");
+
+function initMain(salt) {
+    Countly.init({
+        app_key: "YOUR_APP_KEY",
+        url: "https://your.domain.count.ly",
+        debug: true,
+        salt: salt
+    });
+}
+const salt = "salt";
+
+/**
+* Tests for salt consists of:
+* 1. Init without salt
+* Create events and intercept the SDK requests. Request params should be normal and there should be no checksum
+* 2. Init with salt
+* Create events and intercept the SDK requests. Request params should be normal and there should be a checksum with length 64
+* 3. Node and Web Crypto comparison
+* Compare the checksums calculated by node crypto api and SDK's web crypto api for the same data. Should be equal
+*/
+describe("Salt Tests", () => {
+    it("Init without salt", () => {
+        hp.haltAndClearStorage(() => {
+            initMain(null);
+            var rqArray = [];
+            hp.events();
+            cy.intercept("GET", "**/i?**", (req) => {
+                const { url } = req;
+                rqArray.push(url.split("?")[1]); // get the query string
+            });
+            cy.wait(1000).then(() => {
+                cy.log(rqArray).then(() => {
+                    for (const rq of rqArray) {
+                        const paramsObject = hp.turnSearchStringToObject(rq);
+                        hp.check_commons(paramsObject);
+                        expect(paramsObject.checksum256).to.be.not.ok;
+                    }
+                });
+            });
+        });
+    });
+    it("Init with salt", () => {
+        hp.haltAndClearStorage(() => {
+            initMain(salt);
+            var rqArray = [];
+            hp.events();    
+            cy.intercept("GET", "**/i?**", (req) => {
+                const { url } = req;
+                rqArray.push(url.split("?")[1]);
+            });
+            cy.wait(1000).then(() => {
+                cy.log(rqArray).then(() => {
+                    for (const rq of rqArray) {
+                        const paramsObject = hp.turnSearchStringToObject(rq);
+                        hp.check_commons(paramsObject);
+                        expect(paramsObject.checksum256).to.be.ok;
+                        expect(paramsObject.checksum256.length).to.equal(64);
+                        expect(paramsObject.checksum256).to.match(/^[A-F0-9]{64}$/);
+                        // TODO: directly check the checksum with the node crypto api. Will need some extra decoding logic
+                    }
+                });
+            });
+        });
+    });
+    it('Web Crypto checksum matches a known SHA-256 digest', () => {
+        // sha256("text" + "salt"), computed with node's crypto module, so the SDK's Web Crypto path is
+        // checked against an independent implementation without pulling node builtins into the browser bundle
+        const hash = "3353E16497AD272FEA4382119FF2801E54F0A4CF2057F4E32D00317BDA5126C3";
+        Utils.calculateChecksum("text", salt).then((hash2) => {
+            expect(hash2).to.equal(hash);
+        });
+    });
+});
